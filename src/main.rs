@@ -1,10 +1,11 @@
-use std::{fs};
 use crate::api::BvgClient;
-use crate::api::departures::{DeparturesResponse};
+use std::fs;
 
 mod api;
-use serde::Deserialize;
+mod view;
+
 use clap::Parser;
+use serde::Deserialize;
 use tracing::info;
 
 #[derive(Debug, Deserialize)]
@@ -32,6 +33,10 @@ fn u32_value_15() -> u32 {
 struct Cli {
     /// The path to the file to read
     path: std::path::PathBuf,
+
+    /// Use a simple TUI for display (press 'q' to quit)
+    #[clap(long, action)]
+    tui: bool,
 }
 
 #[tokio::main]
@@ -50,33 +55,11 @@ async fn main() -> anyhow::Result<()> {
     let client = BvgClient::default();
     let result = client.get_departures(stops).await?;
 
-    display_result(result);
+    if args.tui {
+        view::tui::display_tui(result)?;
+    } else {
+        view::std_out::display_plain(result);
+    }
 
     Ok(())
-}
-
-fn display_result(resp: Vec<(String, DeparturesResponse)>) {
-    info!("Got departures for {} stations. Display now.", resp.len());
-
-    for (name, departures) in resp {
-        println!("Station: {}", name);
-        // println!("line  |direction                          |actual");
-        for d in &departures.departures {
-            let line = d.line.as_ref().and_then(|l| l.name.as_ref()).map(String::as_str).unwrap_or("?");
-            let dir = d.direction.as_deref().unwrap_or("");
-            let actual_mins = d.when.map(|w| (w - chrono::Utc::now()).num_seconds() / 60);
-            let delay = d.delay.map(|d| d / 60);
-            let delay_text = match delay {
-                Some(d) if d != 0 => format!(" ({:+}min)", d), // note the `+` for explicit sign
-                _ => String::new(),
-            };
-            println!("{:<6}|{:<35}|{:02}min{}",
-                     line,
-                     dir,
-                     actual_mins.unwrap_or_default().max(0),
-                     delay_text
-            );
-        }
-        println!();
-    }
 }
