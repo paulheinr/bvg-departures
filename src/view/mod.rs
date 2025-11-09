@@ -38,7 +38,7 @@ pub(super) struct DisplayEntry {
 }
 
 pub(super) fn build_display_lines(
-    resp: &Vec<(String, crate::api::departures::DeparturesResponse)>,
+    resp: &Vec<(String, DeparturesResponse)>,
 ) -> Vec<(String, Vec<DisplayEntry>)> {
     use chrono::Utc;
     let mut out: Vec<(String, Vec<DisplayEntry>)> = Vec::new();

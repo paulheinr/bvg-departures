@@ -37,7 +37,7 @@ struct Cli {
     /// The path to the file to read
     path: std::path::PathBuf,
 
-    /// Use a simple TUI for display (press 'q' to quit)
+    /// Use a simple TUI for display
     #[clap(long, action)]
     tui: bool,
 }
