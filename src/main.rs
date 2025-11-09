@@ -16,18 +16,22 @@ pub struct InputStops {
 pub struct InputStop {
     pub id: String,
     pub name: String,
+    #[serde(default = "u32_value_15")]
+    look_ahead: u32,
     // directions can be missing or empty, so Option<Vec<String>> is safe
     /// Directions do not need to match the BVG-API response. It is used for filtering during post-processing.
     #[serde(default)]
     pub directions: Vec<String>,
 }
 
+fn u32_value_15() -> u32 {
+    15
+}
+
 #[derive(Parser, Debug)]
 struct Cli {
     /// The path to the file to read
     path: std::path::PathBuf,
-    #[arg(default_value_t = 20)]
-    look_ahead: u32
 }
 
 #[tokio::main]
@@ -39,7 +43,7 @@ async fn main() -> anyhow::Result<()> {
     let stops: InputStops = serde_yaml::from_str(&fs::read_to_string(args.path)?)?;
 
     let client = BvgClient::default();
-    let result = client.get_departures(stops, args.look_ahead).await?;
+    let result = client.get_departures(stops).await?;
 
     display_result(result);
 

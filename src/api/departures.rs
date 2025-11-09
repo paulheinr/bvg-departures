@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use log::{debug, info};
+use reqwest::Response;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as};
 use url::Url;
@@ -153,52 +154,60 @@ impl BvgClient {
     pub async fn get_departures(
         &self,
         stops: InputStops,
-        look_ahead: u32,
     ) -> Result<Vec<(String, DeparturesResponse)>, DeparturesError> {
         info!("Getting departures");
-
-        let params = DeparturesParams {
-            duration: Some(look_ahead),
-            lines_of_stops: Some(false),
-            remarks: Some(true),
-            language: Some("de".into()),
-            ..Default::default()
-        };
 
         let mut result = vec![];
 
         for s in stops.stops {
             debug!("Getting for stop {}", s.name);
 
-            // fetch
-            let url = self.departures_url(&s)?;
-            let res = self.http.get(url).query(&params).send().await?;
+            let params = DeparturesParams {
+                duration: Some(s.look_ahead),
+                lines_of_stops: Some(false),
+                remarks: Some(true),
+                language: Some("de".into()),
+                ..Default::default()
+            };
 
-            if !res.status().is_success() {
-                let status = res.status();
-                let body = res.text().await.unwrap_or_default();
-                return Err(DeparturesError::Status { status, body });
-            }
+            // fetch
+            let res = self.fetch(&params, &s).await?;
 
             // filter
             let mut response = res.json::<DeparturesResponse>().await?;
-            response.departures.retain(|d| {
-                // retain all departures whose direction is contained in user input
-                if s.directions.is_empty() {
-                    return true
-                }
-
-                if let Some(real_direction) = &d.direction {
-                    s.directions.iter().any(|input_direction| real_direction.contains(input_direction))
-                } else {
-                    true
-                }
-            });
+            Self::filter(&s, &mut response);
 
             result.push((s.name, response));
         }
 
         Ok(result)
+    }
+
+    async fn fetch(&self, params: &DeparturesParams, s: &InputStop) -> Result<Response, DeparturesError> {
+        let url = self.departures_url(&s)?;
+        let res = self.http.get(url).query(&params).send().await?;
+
+        if !res.status().is_success() {
+            let status = res.status();
+            let body = res.text().await.unwrap_or_default();
+            return Err(DeparturesError::Status { status, body });
+        }
+        Ok(res)
+    }
+
+    fn filter(s: &InputStop, response: &mut DeparturesResponse) {
+        response.departures.retain(|d| {
+            // retain all departures whose direction is contained in user input
+            if s.directions.is_empty() {
+                return true
+            }
+
+            if let Some(real_direction) = &d.direction {
+                s.directions.iter().any(|input_direction| real_direction.contains(input_direction))
+            } else {
+                true
+            }
+        });
     }
 
     fn departures_url(&self, s: &InputStop) -> Result<Url, DeparturesError> {
