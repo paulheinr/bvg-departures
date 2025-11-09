@@ -1,12 +1,23 @@
-use crate::api::departures::DeparturesResponse;
+use crate::api::departures::DeparturesApi;
 use crate::view::ResultDisplay;
+use crate::InputStops;
+use async_trait::async_trait;
 use colored::{Color, ColoredString, Colorize};
+use derive_builder::Builder;
 use tracing::info;
 
-pub struct StdoutDisplay {}
+#[derive(Builder)]
+#[builder(pattern = "owned")]
+pub struct StdoutDisplay<D: DeparturesApi> {
+    api_client: D,
+    stops: InputStops,
+}
 
-impl ResultDisplay for StdoutDisplay {
-    fn display(&self, resp: Vec<(String, DeparturesResponse)>) -> anyhow::Result<()> {
+#[async_trait]
+impl<D: DeparturesApi + Sync> ResultDisplay for StdoutDisplay<D> {
+    async fn display(&self) -> anyhow::Result<()> {
+        let resp = self.api_client.get_departures(&self.stops).await?;
+
         info!("Got departures for {} stations. Display now.", resp.len());
 
         let grouped = crate::view::build_display_lines(&resp);

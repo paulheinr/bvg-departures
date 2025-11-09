@@ -1,10 +1,13 @@
-use crate::api::departures::DeparturesResponse;
+use crate::api::departures::DeparturesApi;
 use crate::view::{DisplayEntry, ResultDisplay};
+use crate::InputStops;
+use async_trait::async_trait;
 use crossterm::event::{self, Event, KeyCode};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
+use derive_builder::Builder;
 use std::io::{stdout, Stdout};
 use tui::layout::Alignment;
 use tui::style::{Color as TuiColor, Modifier, Style};
@@ -12,10 +15,18 @@ use tui::text::{Span, Spans, Text};
 use tui::widgets::{Block, Borders, Paragraph};
 use tui::{backend::CrosstermBackend, Terminal};
 
-pub struct TuiDisplay {}
+#[derive(Builder)]
+#[builder(pattern = "owned")]
+pub struct TuiDisplay<D: DeparturesApi> {
+    api_client: D,
+    stops: InputStops,
+}
 
-impl ResultDisplay for TuiDisplay {
-    fn display(&self, resp: Vec<(String, DeparturesResponse)>) -> anyhow::Result<()> {
+#[async_trait]
+impl<D: DeparturesApi + Sync> ResultDisplay for TuiDisplay<D> {
+    async fn display(&self) -> anyhow::Result<()> {
+        let resp = self.api_client.get_departures(&self.stops).await?;
+
         let display_lines = crate::view::build_display_lines(&resp);
 
         let spans = Self::create_spans(display_lines);
@@ -53,7 +64,7 @@ impl ResultDisplay for TuiDisplay {
     }
 }
 
-impl TuiDisplay {
+impl<D: DeparturesApi> TuiDisplay<D> {
     fn render(
         spans: &Vec<Spans>,
         terminal: &mut Terminal<CrosstermBackend<Stdout>>,

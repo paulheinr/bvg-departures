@@ -1,11 +1,12 @@
+use crate::api::BvgClient;
+use crate::{InputStop, InputStops};
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use reqwest::Response;
 use serde::{Deserialize, Serialize};
-use serde_with::{serde_as};
+use serde_with::serde_as;
 use tracing::{debug, info};
 use url::Url;
-use crate::api::BvgClient;
-use crate::{InputStop, InputStops};
 
 /// Query parameters for GET /stops/:id/departures
 ///
@@ -42,13 +43,20 @@ pub struct DeparturesParams {
     pub language: Option<String>,
 
     // Product filters:
-    #[serde(skip_serializing_if = "Option::is_none")] pub suburban: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")] pub subway:   Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")] pub tram:     Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")] pub bus:      Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")] pub ferry:    Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")] pub express:  Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")] pub regional: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suburban: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subway: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tram: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bus: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ferry: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub express: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub regional: Option<bool>,
 
     /// Pretty-print JSON? (server-side)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -102,13 +110,13 @@ pub struct Line {
     #[serde(default)]
     pub r#type: Option<String>, // "line"
     #[serde(default)]
-    pub id: Option<String>,     // e.g. "u6"
+    pub id: Option<String>, // e.g. "u6"
     #[serde(default)]
-    pub name: Option<String>,   // e.g. "U6"
+    pub name: Option<String>, // e.g. "U6"
     #[serde(default)]
-    pub mode: Option<String>,   // e.g. "train" | "bus" ...
+    pub mode: Option<String>, // e.g. "train" | "bus" ...
     #[serde(default)]
-    pub product: Option<String>,// e.g. "subway" | "bus"
+    pub product: Option<String>, // e.g. "subway" | "bus"
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -117,7 +125,7 @@ pub struct Stop {
     #[serde(default)]
     pub r#type: Option<String>, // "stop"
     #[serde(default)]
-    pub id: Option<String>,     // stop id
+    pub id: Option<String>, // stop id
     #[serde(default)]
     pub name: Option<String>,
 }
@@ -128,7 +136,7 @@ pub struct Remark {
     #[serde(default)]
     pub id: Option<String>,
     #[serde(default)]
-    pub r#type: Option<String>,     // e.g. "warning"
+    pub r#type: Option<String>, // e.g. "warning"
     #[serde(default)]
     pub summary: Option<String>,
     #[serde(default)]
@@ -143,23 +151,35 @@ pub enum DeparturesError {
     #[error("URL build error: {0}")]
     Url(#[from] url::ParseError),
     #[error("Server returned {status}: {body}")]
-    Status { status: reqwest::StatusCode, body: String },
+    Status {
+        status: reqwest::StatusCode,
+        body: String,
+    },
 }
 
-impl BvgClient {
+#[async_trait]
+pub trait DeparturesApi {
+    async fn get_departures(
+        &self,
+        stops: &InputStops,
+    ) -> Result<Vec<(String, DeparturesResponse)>, DeparturesError>;
+}
+
+#[async_trait]
+impl DeparturesApi for BvgClient {
     /// GET /stops/:id/departures
     ///
     /// Example equivalent to:
     /// `curl 'https://v6.bvg.transport.rest/stops/900055151/departures?duration=10&linesOfStops=false&remarks=true&language=en'`
-    pub async fn get_departures(
+    async fn get_departures(
         &self,
-        stops: InputStops,
+        stops: &InputStops,
     ) -> Result<Vec<(String, DeparturesResponse)>, DeparturesError> {
         info!("Getting departures");
 
         let mut result = vec![];
 
-        for s in stops.stops {
+        for s in &stops.stops {
             debug!("Getting for stop {}", s.name);
 
             let params = DeparturesParams {
@@ -177,13 +197,19 @@ impl BvgClient {
             let mut response = res.json::<DeparturesResponse>().await?;
             Self::filter(&s, &mut response);
 
-            result.push((s.name, response));
+            result.push((s.name.clone(), response));
         }
 
         Ok(result)
     }
+}
 
-    async fn fetch(&self, params: &DeparturesParams, s: &InputStop) -> Result<Response, DeparturesError> {
+impl BvgClient {
+    async fn fetch(
+        &self,
+        params: &DeparturesParams,
+        s: &InputStop,
+    ) -> Result<Response, DeparturesError> {
         let url = self.departures_url(&s)?;
         let res = self.http.get(url).query(&params).send().await?;
 
@@ -199,11 +225,13 @@ impl BvgClient {
         response.departures.retain(|d| {
             // retain all departures whose direction is contained in user input
             if s.directions.is_empty() {
-                return true
+                return true;
             }
 
             if let Some(real_direction) = &d.direction {
-                s.directions.iter().any(|input_direction| real_direction.contains(input_direction))
+                s.directions
+                    .iter()
+                    .any(|input_direction| real_direction.contains(input_direction))
             } else {
                 true
             }
@@ -212,7 +240,8 @@ impl BvgClient {
 
     fn departures_url(&self, s: &InputStop) -> Result<Url, DeparturesError> {
         let mut url = self.base.join("stops/")?;
-        url.path_segments_mut().expect("url base")
+        url.path_segments_mut()
+            .expect("url base")
             .pop_if_empty()
             .push(&s.id)
             .push("departures");

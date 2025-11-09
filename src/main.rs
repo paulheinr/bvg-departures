@@ -4,8 +4,8 @@ use std::fs;
 mod api;
 mod view;
 
-use crate::view::std_out::StdoutDisplay;
-use crate::view::tui::TuiDisplay;
+use crate::view::std_out::StdoutDisplayBuilder;
+use crate::view::tui::TuiDisplayBuilder;
 use crate::view::ResultDisplay;
 use clap::Parser;
 use serde::Deserialize;
@@ -55,15 +55,23 @@ async fn main() -> anyhow::Result<()> {
 
     let stops: InputStops = serde_yaml::from_str(&fs::read_to_string(args.path)?)?;
 
-    let client = BvgClient::default();
-    let result = client.get_departures(stops).await?;
-
     let display: Box<dyn ResultDisplay> = if args.tui {
-        Box::new(TuiDisplay {})
+        Box::new(
+            TuiDisplayBuilder::<BvgClient>::default()
+                .stops(stops)
+                .api_client(BvgClient::default())
+                .build()?,
+        )
     } else {
-        Box::new(StdoutDisplay {})
+        Box::new(
+            StdoutDisplayBuilder::<BvgClient>::default()
+                .stops(stops)
+                .api_client(BvgClient::default())
+                .build()?,
+        )
     };
 
-    display.display(result)?;
+    display.display().await?;
+
     Ok(())
 }

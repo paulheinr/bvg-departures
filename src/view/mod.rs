@@ -1,10 +1,12 @@
 use crate::api::departures::DeparturesResponse;
+use async_trait::async_trait;
 
 pub(crate) mod std_out;
 pub(crate) mod tui;
 
+#[async_trait]
 pub(super) trait ResultDisplay {
-    fn display(&self, resp: Vec<(String, DeparturesResponse)>) -> anyhow::Result<()>;
+    async fn display(&self) -> anyhow::Result<()>;
 }
 
 pub(super) fn product_symbol(product: &str) -> &'static str {
