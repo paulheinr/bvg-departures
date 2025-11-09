@@ -84,7 +84,13 @@ impl<D: DeparturesApi> TuiDisplay<D> {
         // Build lines as Vec<Spans> so we can style the line token separately
         let mut spans: Vec<Spans> = Vec::new();
         for (name, entries) in display_lines {
-            spans.push(Spans::from(Span::raw(format!("Station: {}", name))));
+            spans.push(Spans::from(Span::styled(
+                format!("Station: {}", name),
+                Style::default()
+                    .add_modifier(Modifier::BOLD)
+                    .add_modifier(Modifier::UNDERLINED),
+            )));
+
             for e in entries {
                 let (r, g, b) = hex_to_rgb(e.hex);
                 let tui_color = TuiColor::Rgb(r, g, b);
@@ -98,10 +104,10 @@ impl<D: DeparturesApi> TuiDisplay<D> {
                     Span::raw(format!("{} ", e.symbol)),
                     Span::styled(
                         format!("{:<5}", e.line),
-                        Style::default().fg(tui_color).add_modifier(Modifier::BOLD),
+                        Style::default().bg(tui_color).add_modifier(Modifier::BOLD),
                     ),
                     Span::raw(format!(
-                        " | {:<30} | {:02}min{}",
+                        " | {:<30} | {:2}min{}",
                         e.dir, e.actual_mins, delay_text
                     )),
                 ];

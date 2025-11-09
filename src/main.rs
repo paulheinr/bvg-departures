@@ -39,6 +39,7 @@ struct Cli {
 
     /// Use a simple TUI for display
     #[clap(long, action)]
+    #[clap(default_value = "true")]
     tui: bool,
 }
 
