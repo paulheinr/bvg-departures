@@ -4,3 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+reqwest = { version = "0.12.24", features = ["json"] }
+chrono = { version = "0.4", features = ["serde", "clock"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_with = "3.15.1"
+thiserror = "2.0.17"
+url = "2.5.7"
+tokio = { version = "1.48.0", features = ["rt", "rt-multi-thread", "macros"] }
+anyhow = "1.0.100"
