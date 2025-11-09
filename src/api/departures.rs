@@ -1,8 +1,8 @@
 use chrono::{DateTime, Utc};
-use log::{debug, info};
 use reqwest::Response;
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as};
+use tracing::{debug, info};
 use url::Url;
 use crate::api::BvgClient;
 use crate::{InputStop, InputStops};

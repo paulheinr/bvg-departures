@@ -5,7 +5,7 @@ use crate::api::departures::{DeparturesResponse};
 mod api;
 use serde::Deserialize;
 use clap::Parser;
-use log::info;
+use tracing::info;
 
 #[derive(Debug, Deserialize)]
 pub struct InputStops {
@@ -36,6 +36,11 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // construct a subscriber that prints formatted traces to stdout
+    let subscriber = tracing_subscriber::FmtSubscriber::new();
+    // use that subscriber to process traces emitted after this point
+    tracing::subscriber::set_global_default(subscriber)?;
+
     let args = Cli::parse();
 
     info!("Starting with {}", args.path.display());
@@ -51,7 +56,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn display_result(resp: Vec<(String, DeparturesResponse)>) {
-    info!("Got {} departures. Display now.", resp.len());
+    info!("Got departures for {} stations. Display now.", resp.len());
 
     for (name, departures) in resp {
         println!("Station: {}", name);
