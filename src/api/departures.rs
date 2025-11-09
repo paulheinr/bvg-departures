@@ -1,7 +1,10 @@
 use chrono::{DateTime, Utc};
+use log::{debug, info};
 use serde::{Deserialize, Serialize};
 use serde_with::{serde_as};
+use url::Url;
 use crate::api::BvgClient;
+use crate::{InputStop, InputStops};
 
 /// Query parameters for GET /stops/:id/departures
 ///
@@ -54,6 +57,7 @@ pub struct DeparturesParams {
 /// Typed response. The docs show an envelope with `departures` and an optional timestamp.
 /// See example payload in the docs. Fields we don’t strictly need are `Option`.
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct DeparturesResponse {
     pub departures: Vec<Departure>,
     #[serde(default)]
@@ -61,6 +65,7 @@ pub struct DeparturesResponse {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct Departure {
     pub trip_id: Option<String>,
     pub direction: Option<String>,
@@ -91,6 +96,7 @@ pub struct Departure {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct Line {
     #[serde(default)]
     pub r#type: Option<String>, // "line"
@@ -105,6 +111,7 @@ pub struct Line {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct Stop {
     #[serde(default)]
     pub r#type: Option<String>, // "stop"
@@ -115,6 +122,7 @@ pub struct Stop {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
 pub struct Remark {
     #[serde(default)]
     pub id: Option<String>,
@@ -144,21 +152,61 @@ impl BvgClient {
     /// `curl 'https://v6.bvg.transport.rest/stops/900055151/departures?duration=10&linesOfStops=false&remarks=true&language=en'`
     pub async fn get_departures(
         &self,
-        stop_id: &str,
-        params: &DeparturesParams,
-    ) -> Result<DeparturesResponse, DeparturesError> {
+        stops: InputStops,
+        look_ahead: u32,
+    ) -> Result<Vec<(String, DeparturesResponse)>, DeparturesError> {
+        info!("Getting departures");
+
+        let params = DeparturesParams {
+            duration: Some(look_ahead),
+            lines_of_stops: Some(false),
+            remarks: Some(true),
+            language: Some("de".into()),
+            ..Default::default()
+        };
+
+        let mut result = vec![];
+
+        for s in stops.stops {
+            debug!("Getting for stop {}", s.name);
+
+            // fetch
+            let url = self.departures_url(&s)?;
+            let res = self.http.get(url).query(&params).send().await?;
+
+            if !res.status().is_success() {
+                let status = res.status();
+                let body = res.text().await.unwrap_or_default();
+                return Err(DeparturesError::Status { status, body });
+            }
+
+            // filter
+            let mut response = res.json::<DeparturesResponse>().await?;
+            response.departures.retain(|d| {
+                // retain all departures whose direction is contained in user input
+                if s.directions.is_empty() {
+                    return true
+                }
+
+                if let Some(real_direction) = &d.direction {
+                    s.directions.iter().any(|input_direction| real_direction.contains(input_direction))
+                } else {
+                    true
+                }
+            });
+
+            result.push((s.name, response));
+        }
+
+        Ok(result)
+    }
+
+    fn departures_url(&self, s: &InputStop) -> Result<Url, DeparturesError> {
         let mut url = self.base.join("stops/")?;
         url.path_segments_mut().expect("url base")
             .pop_if_empty()
-            .push(stop_id)
+            .push(&s.id)
             .push("departures");
-
-        let res = self.http.get(url).query(params).send().await?;
-        if !res.status().is_success() {
-            let status = res.status();
-            let body = res.text().await.unwrap_or_default();
-            return Err(DeparturesError::Status { status, body });
-        }
-        Ok(res.json::<DeparturesResponse>().await?)
+        Ok(url)
     }
 }
