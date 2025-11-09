@@ -4,6 +4,9 @@ use std::fs;
 mod api;
 mod view;
 
+use crate::view::std_out::StdoutDisplay;
+use crate::view::tui::TuiDisplay;
+use crate::view::ResultDisplay;
 use clap::Parser;
 use serde::Deserialize;
 use tracing::info;
@@ -55,11 +58,12 @@ async fn main() -> anyhow::Result<()> {
     let client = BvgClient::default();
     let result = client.get_departures(stops).await?;
 
-    if args.tui {
-        view::tui::display_tui(result)?;
+    let display: Box<dyn ResultDisplay> = if args.tui {
+        Box::new(TuiDisplay {})
     } else {
-        view::std_out::display_plain(result);
-    }
+        Box::new(StdoutDisplay {})
+    };
 
+    display.display(result)?;
     Ok(())
 }
