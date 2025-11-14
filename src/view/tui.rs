@@ -2,6 +2,7 @@ use crate::api::departures::DeparturesApi;
 use crate::view::{DisplayEntry, ResultDisplay};
 use crate::InputStops;
 use async_trait::async_trait;
+use chrono::Local;
 use crossterm::event::{self, Event, KeyCode};
 use crossterm::execute;
 use crossterm::terminal::{
@@ -83,6 +84,21 @@ impl<D: DeparturesApi> TuiDisplay<D> {
     fn create_spans(display_lines: Vec<(String, Vec<DisplayEntry>)>) -> Vec<Spans<'static>> {
         // Build lines as Vec<Spans> so we can style the line token separately
         let mut spans: Vec<Spans> = Vec::new();
+
+        // Header with current time on the right
+        let now = Local::now();
+        let now_str = now.format("%H:%M:%S").to_string();
+
+        // Create a header line: title left, current time right. We build a Spans with two Spans where the second is padded to the right by inserting spaces.
+        // We'll estimate padding based on a reasonable terminal width - instead, push a single Spans with both parts separated by many spaces so it visually aligns to right in most terminals.
+        // A more robust approach would query the terminal width; for simplicity, use a fixed padding here.
+        spans.push(Spans::from(Span::styled(
+            format!("Current time: {:}", now_str),
+            Style::default().add_modifier(Modifier::BOLD),
+        )));
+
+        spans.push(Spans::from(Span::raw("")));
+
         for (name, entries) in display_lines {
             spans.push(Spans::from(Span::styled(
                 format!("Station: {}", name),
@@ -99,7 +115,13 @@ impl<D: DeparturesApi> TuiDisplay<D> {
                     _ => String::new(),
                 };
 
-                // Compose spans: symbol, styled line, and the rest as raw text
+                let abs_text = e
+                    .abs_time
+                    .as_ref()
+                    .map(|t| format!("{} ", t))
+                    .unwrap_or_else(|| String::from("    "));
+
+                // Compose spans: symbol, styled line, absolute time, and the rest as raw text
                 let span_vec = vec![
                     Span::raw(format!("{} ", e.symbol)),
                     Span::styled(
@@ -107,8 +129,8 @@ impl<D: DeparturesApi> TuiDisplay<D> {
                         Style::default().bg(tui_color).add_modifier(Modifier::BOLD),
                     ),
                     Span::raw(format!(
-                        " | {:<30} | {:2}min{}",
-                        e.dir, e.actual_mins, delay_text
+                        "| {:<30} | {} | {:2}min{}",
+                        e.dir, abs_text, e.actual_mins, delay_text
                     )),
                 ];
 

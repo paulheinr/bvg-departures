@@ -37,12 +37,14 @@ pub(super) struct DisplayEntry {
     pub delay_mins: Option<i64>,
     pub symbol: &'static str,
     pub hex: &'static str,
+    // Absolute departure time formatted as HH:MM in local time (None if unknown)
+    pub abs_time: Option<String>,
 }
 
 pub(super) fn build_display_lines(
     resp: &Vec<(String, DeparturesResponse)>,
 ) -> Vec<(String, Vec<DisplayEntry>)> {
-    use chrono::Utc;
+    use chrono::{Local, Utc};
     let mut out: Vec<(String, Vec<DisplayEntry>)> = Vec::new();
     for (station_name, departures) in resp.iter() {
         let mut entries: Vec<DisplayEntry> = Vec::new();
@@ -72,6 +74,10 @@ pub(super) fn build_display_lines(
                 .max(0);
             let delay_mins = d.delay.map(|d| d / 60);
 
+            let abs_time = d
+                .when
+                .map(|w| w.with_timezone(&Local).format("%H:%M").to_string());
+
             entries.push(DisplayEntry {
                 line,
                 dir,
@@ -79,6 +85,7 @@ pub(super) fn build_display_lines(
                 delay_mins,
                 symbol,
                 hex,
+                abs_time,
             });
         }
         out.push((station_name.clone(), entries));
