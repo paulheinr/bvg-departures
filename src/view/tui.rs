@@ -26,12 +26,6 @@ pub struct TuiDisplay<D: DeparturesApi> {
 #[async_trait]
 impl<D: DeparturesApi + Sync> ResultDisplay for TuiDisplay<D> {
     async fn display(&self) -> anyhow::Result<()> {
-        let resp = self.api_client.get_departures(&self.stops).await?;
-
-        let display_lines = crate::view::build_display_lines(&resp);
-
-        let spans = Self::create_spans(display_lines);
-
         // Setup terminal
         enable_raw_mode()?;
         let mut stdout = stdout();
@@ -39,18 +33,27 @@ impl<D: DeparturesApi + Sync> ResultDisplay for TuiDisplay<D> {
         let backend = CrosstermBackend::new(stdout);
         let mut terminal = Terminal::new(backend)?;
 
-        Self::render(&spans, &mut terminal)?;
+        let resp = self.api_client.get_departures(&self.stops).await?;
+        let mut display_lines = crate::view::build_display_lines(&resp);
+
+        Self::render(&display_lines, &mut terminal)?;
 
         // Wait for user to press 'q' to quit. Timeout every 250ms to keep responsive (no refresh behavior implemented).
         loop {
             match event::read()? {
                 Event::Key(key) => match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => break,
+                    KeyCode::Char('r') => {
+                        // Refresh: re-fetch departures and re-render
+                        let resp = self.api_client.get_departures(&self.stops).await?;
+                        display_lines = crate::view::build_display_lines(&resp);
+                        Self::render(&display_lines, &mut terminal)?;
+                    }
                     _ => {}
                 },
                 Event::Resize(_, _) => {
                     // Re-render using the current terminal size
-                    Self::render(&spans, &mut terminal)?;
+                    Self::render(&display_lines, &mut terminal)?;
                 }
                 _ => {}
             }
@@ -67,78 +70,73 @@ impl<D: DeparturesApi + Sync> ResultDisplay for TuiDisplay<D> {
 
 impl<D: DeparturesApi> TuiDisplay<D> {
     fn render(
-        spans: &Vec<Spans>,
+        display_lines: &Vec<(String, Vec<DisplayEntry>)>,
         terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     ) -> Result<(), anyhow::Error> {
         // Render once and wait for 'q' to quit
         terminal.draw(|f| {
             let size = f.size();
-            let paragraph = Paragraph::new(Text::from(spans.clone()))
+
+            // Build header with current time right-aligned within the content area
+            let now = Local::now();
+            let now_str = now.format("%H:%M:%S").to_string();
+            let header_line = format!("Request time: {}", now_str);
+
+            // Build the lines for the entries
+            let mut spans: Vec<Spans> = Vec::new();
+            spans.push(Spans::from(Span::styled(
+                header_line,
+                Style::default().add_modifier(Modifier::BOLD),
+            )));
+
+            spans.push(Spans::from(Span::raw("")));
+
+            for (name, entries) in display_lines {
+                spans.push(Spans::from(Span::styled(
+                    format!("Station: {}", name),
+                    Style::default()
+                        .add_modifier(Modifier::BOLD)
+                        .add_modifier(Modifier::UNDERLINED),
+                )));
+
+                for e in entries {
+                    let (r, g, b) = hex_to_rgb(e.hex);
+                    let tui_color = TuiColor::Rgb(r, g, b);
+                    let delay_text = match e.delay_mins {
+                        Some(d) if d != 0 => format!(" ({:+}min)", d),
+                        _ => String::new(),
+                    };
+
+                    let abs_text = e
+                        .abs_time
+                        .as_ref()
+                        .map(|t| format!("{}", t))
+                        .unwrap_or_else(|| String::from("--"));
+
+                    // Compose spans: symbol, styled line, absolute time, and the rest as raw text
+                    let span_vec = vec![
+                        Span::raw(format!("{} ", e.symbol)),
+                        Span::styled(
+                            format!("{:<5}", e.line),
+                            Style::default().bg(tui_color).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw(format!(
+                            "| {:<30} | {:>5} | {:2}min{}",
+                            e.dir, abs_text, e.actual_mins, delay_text
+                        )),
+                    ];
+
+                    spans.push(Spans::from(span_vec));
+                }
+                spans.push(Spans::from(Span::raw("")));
+            }
+
+            let paragraph = Paragraph::new(Text::from(spans))
                 .block(Block::default().borders(Borders::ALL).title("Departures"))
                 .alignment(Alignment::Left);
             f.render_widget(paragraph, size);
         })?;
         Ok(())
-    }
-
-    fn create_spans(display_lines: Vec<(String, Vec<DisplayEntry>)>) -> Vec<Spans<'static>> {
-        // Build lines as Vec<Spans> so we can style the line token separately
-        let mut spans: Vec<Spans> = Vec::new();
-
-        // Header with current time on the right
-        let now = Local::now();
-        let now_str = now.format("%H:%M:%S").to_string();
-
-        // Create a header line: title left, current time right. We build a Spans with two Spans where the second is padded to the right by inserting spaces.
-        // We'll estimate padding based on a reasonable terminal width - instead, push a single Spans with both parts separated by many spaces so it visually aligns to right in most terminals.
-        // A more robust approach would query the terminal width; for simplicity, use a fixed padding here.
-        spans.push(Spans::from(Span::styled(
-            format!("Current time: {:}", now_str),
-            Style::default().add_modifier(Modifier::BOLD),
-        )));
-
-        spans.push(Spans::from(Span::raw("")));
-
-        for (name, entries) in display_lines {
-            spans.push(Spans::from(Span::styled(
-                format!("Station: {}", name),
-                Style::default()
-                    .add_modifier(Modifier::BOLD)
-                    .add_modifier(Modifier::UNDERLINED),
-            )));
-
-            for e in entries {
-                let (r, g, b) = hex_to_rgb(e.hex);
-                let tui_color = TuiColor::Rgb(r, g, b);
-                let delay_text = match e.delay_mins {
-                    Some(d) if d != 0 => format!(" ({:+}min)", d),
-                    _ => String::new(),
-                };
-
-                let abs_text = e
-                    .abs_time
-                    .as_ref()
-                    .map(|t| format!("{} ", t))
-                    .unwrap_or_else(|| String::from("    "));
-
-                // Compose spans: symbol, styled line, absolute time, and the rest as raw text
-                let span_vec = vec![
-                    Span::raw(format!("{} ", e.symbol)),
-                    Span::styled(
-                        format!("{:<5}", e.line),
-                        Style::default().bg(tui_color).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw(format!(
-                        "| {:<30} | {} | {:2}min{}",
-                        e.dir, abs_text, e.actual_mins, delay_text
-                    )),
-                ];
-
-                spans.push(Spans::from(span_vec));
-            }
-            spans.push(Spans::from(Span::raw("")));
-        }
-        spans
     }
 }
 
