@@ -5,7 +5,7 @@ mod api;
 mod view;
 
 use crate::view::std_out::StdoutDisplayBuilder;
-use crate::view::tui::TuiDisplayBuilder;
+use crate::view::tui::{LogBuffer, TuiDisplayBuilder};
 use crate::view::ResultDisplay;
 use clap::Parser;
 use serde::Deserialize;
@@ -45,22 +45,34 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // construct a subscriber that prints formatted traces to stdout
-    let subscriber = tracing_subscriber::FmtSubscriber::new();
-    // use that subscriber to process traces emitted after this point
-    tracing::subscriber::set_global_default(subscriber)?;
-
     let args = Cli::parse();
+
+    let log_buffer = if args.tui {
+        let log_buffer = LogBuffer::new(8);
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(log_buffer.make_writer())
+            .finish();
+        tracing::subscriber::set_global_default(subscriber)?;
+        Some(log_buffer)
+    } else {
+        // construct a subscriber that prints formatted traces to stdout
+        let subscriber = tracing_subscriber::FmtSubscriber::new();
+        // use that subscriber to process traces emitted after this point
+        tracing::subscriber::set_global_default(subscriber)?;
+        None
+    };
 
     info!("Starting with {}", args.path.display());
 
     let stops: InputStops = serde_yaml::from_str(&fs::read_to_string(args.path)?)?;
 
     let display: Box<dyn ResultDisplay> = if args.tui {
+        let log_buffer = log_buffer.expect("log buffer for tui");
         Box::new(
             TuiDisplayBuilder::<BvgClient>::default()
                 .stops(stops)
                 .api_client(BvgClient::default())
+                .log_buffer(log_buffer)
                 .build()?,
         )
     } else {

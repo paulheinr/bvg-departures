@@ -3,24 +3,107 @@ use crate::view::{DisplayEntry, ResultDisplay};
 use crate::InputStops;
 use async_trait::async_trait;
 use chrono::Local;
-use crossterm::event::{self, Event, KeyCode};
+use crossterm::event::{self, Event, KeyCode, KeyModifiers};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use derive_builder::Builder;
+use std::collections::VecDeque;
+use std::io;
 use std::io::{stdout, Stdout};
+use std::sync::{Arc, Mutex};
+use tui::layout::{Constraint, Direction, Layout};
 use tui::layout::Alignment;
 use tui::style::{Color as TuiColor, Modifier, Style};
 use tui::text::{Span, Spans, Text};
 use tui::widgets::{Block, Borders, Paragraph};
 use tui::{backend::CrosstermBackend, Terminal};
+use tracing_subscriber::fmt::writer::MakeWriter;
+
+#[derive(Clone)]
+pub struct LogBuffer {
+    lines: Arc<Mutex<VecDeque<String>>>,
+    max_lines: usize,
+}
+
+impl LogBuffer {
+    pub fn new(max_lines: usize) -> Self {
+        Self {
+            lines: Arc::new(Mutex::new(VecDeque::with_capacity(max_lines))),
+            max_lines,
+        }
+    }
+
+    pub fn make_writer(&self) -> LogBufferWriterFactory {
+        LogBufferWriterFactory {
+            buffer: self.clone(),
+        }
+    }
+
+    fn push_line(&self, line: String) {
+        let mut lines = self.lines.lock().expect("log buffer lock");
+        lines.push_back(line);
+        while lines.len() > self.max_lines {
+            lines.pop_front();
+        }
+    }
+
+    fn snapshot(&self) -> Vec<String> {
+        let lines = self.lines.lock().expect("log buffer lock");
+        lines.iter().cloned().collect()
+    }
+}
+
+pub struct LogBufferWriterFactory {
+    buffer: LogBuffer,
+}
+
+impl<'a> MakeWriter<'a> for LogBufferWriterFactory {
+    type Writer = LogBufferWriter;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        LogBufferWriter {
+            buffer: self.buffer.clone(),
+            pending: String::new(),
+        }
+    }
+}
+
+pub struct LogBufferWriter {
+    buffer: LogBuffer,
+    pending: String,
+}
+
+impl io::Write for LogBufferWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let chunk = String::from_utf8_lossy(buf);
+        self.pending.push_str(&chunk);
+
+        while let Some(pos) = self.pending.find('\n') {
+            let line = self.pending[..pos].to_string();
+            self.buffer.push_line(line);
+            self.pending = self.pending[pos + 1..].to_string();
+        }
+
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        if !self.pending.is_empty() {
+            let line = std::mem::take(&mut self.pending);
+            self.buffer.push_line(line);
+        }
+        Ok(())
+    }
+}
 
 #[derive(Builder)]
 #[builder(pattern = "owned")]
 pub struct TuiDisplay<D: DeparturesApi> {
     api_client: D,
     stops: InputStops,
+    log_buffer: LogBuffer,
 }
 
 #[async_trait]
@@ -36,24 +119,25 @@ impl<D: DeparturesApi + Sync> ResultDisplay for TuiDisplay<D> {
         let resp = self.api_client.get_departures(&self.stops).await?;
         let mut display_lines = crate::view::build_display_lines(&resp);
 
-        Self::render(&display_lines, &mut terminal)?;
+        Self::render(&display_lines, &self.log_buffer, &mut terminal)?;
 
         // Wait for user to press 'q' to quit. Timeout every 250ms to keep responsive (no refresh behavior implemented).
         loop {
             match event::read()? {
                 Event::Key(key) => match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => break,
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
                     KeyCode::Char('r') => {
                         // Refresh: re-fetch departures and re-render
                         let resp = self.api_client.get_departures(&self.stops).await?;
                         display_lines = crate::view::build_display_lines(&resp);
-                        Self::render(&display_lines, &mut terminal)?;
+                        Self::render(&display_lines, &self.log_buffer, &mut terminal)?;
                     }
                     _ => {}
                 },
                 Event::Resize(_, _) => {
                     // Re-render using the current terminal size
-                    Self::render(&display_lines, &mut terminal)?;
+                    Self::render(&display_lines, &self.log_buffer, &mut terminal)?;
                 }
                 _ => {}
             }
@@ -71,11 +155,17 @@ impl<D: DeparturesApi + Sync> ResultDisplay for TuiDisplay<D> {
 impl<D: DeparturesApi> TuiDisplay<D> {
     fn render(
         display_lines: &Vec<(String, Vec<DisplayEntry>)>,
+        log_buffer: &LogBuffer,
         terminal: &mut Terminal<CrosstermBackend<Stdout>>,
     ) -> Result<(), anyhow::Error> {
         // Render once and wait for 'q' to quit
         terminal.draw(|f| {
             let size = f.size();
+            let log_height = if size.height > 10 { 5 } else { 3 };
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Min(5), Constraint::Length(log_height)].as_ref())
+                .split(size);
 
             // Build header with current time right-aligned within the content area
             let now = Local::now();
@@ -134,7 +224,22 @@ impl<D: DeparturesApi> TuiDisplay<D> {
             let paragraph = Paragraph::new(Text::from(spans))
                 .block(Block::default().borders(Borders::ALL).title("Departures"))
                 .alignment(Alignment::Left);
-            f.render_widget(paragraph, size);
+
+            let log_lines = log_buffer.snapshot();
+            let log_spans: Vec<Spans> = if log_lines.is_empty() {
+                vec![Spans::from(Span::raw("No logs yet"))]
+            } else {
+                log_lines
+                    .into_iter()
+                    .map(|line| Spans::from(Span::raw(line)))
+                    .collect()
+            };
+            let log_paragraph = Paragraph::new(Text::from(log_spans))
+                .block(Block::default().borders(Borders::ALL).title("Logs"))
+                .alignment(Alignment::Left);
+
+            f.render_widget(paragraph, chunks[0]);
+            f.render_widget(log_paragraph, chunks[1]);
         })?;
         Ok(())
     }
