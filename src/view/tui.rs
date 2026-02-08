@@ -13,13 +13,15 @@ use std::collections::VecDeque;
 use std::io;
 use std::io::{stdout, Stdout};
 use std::sync::{Arc, Mutex};
-use tui::layout::{Constraint, Direction, Layout};
+use tracing::info;
+use tracing_subscriber::fmt::writer::MakeWriter;
 use tui::layout::Alignment;
+use tui::layout::{Constraint, Direction, Layout};
 use tui::style::{Color as TuiColor, Modifier, Style};
 use tui::text::{Span, Spans, Text};
 use tui::widgets::{Block, Borders, Paragraph};
 use tui::{backend::CrosstermBackend, Terminal};
-use tracing_subscriber::fmt::writer::MakeWriter;
+use unicode_width::UnicodeWidthStr;
 
 #[derive(Clone)]
 pub struct LogBuffer {
@@ -127,6 +129,7 @@ impl<D: DeparturesApi + Sync> ResultDisplay for TuiDisplay<D> {
                 Event::Key(key) => match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => break,
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
+                    KeyCode::Char('l') => info!("This is a sample log."),
                     KeyCode::Char('r') => {
                         // Refresh: re-fetch departures and re-render
                         let resp = self.api_client.get_departures(&self.stops).await?;
@@ -181,6 +184,10 @@ impl<D: DeparturesApi> TuiDisplay<D> {
 
             spans.push(Spans::from(Span::raw("")));
 
+            let (line_width, dir_width) = max_column_widths(display_lines);
+            let line_width = line_width.max(5);
+            let dir_width = dir_width.max(1);
+
             for (name, entries) in display_lines {
                 spans.push(Spans::from(Span::styled(
                     format!("Station: {}", name),
@@ -207,12 +214,16 @@ impl<D: DeparturesApi> TuiDisplay<D> {
                     let span_vec = vec![
                         Span::raw(format!("{} ", e.symbol)),
                         Span::styled(
-                            format!("{:<5}", e.line),
+                            format!("{:<width$}", e.line, width = line_width),
                             Style::default().bg(tui_color).add_modifier(Modifier::BOLD),
                         ),
                         Span::raw(format!(
-                            "| {:<30} | {:>5} | {:2}min{}",
-                            e.dir, abs_text, e.actual_mins, delay_text
+                            "| {:<width$} | {:>5} | {:2}min{}",
+                            e.dir,
+                            abs_text,
+                            e.actual_mins,
+                            delay_text,
+                            width = dir_width
                         )),
                     ];
 
@@ -251,4 +262,16 @@ fn hex_to_rgb(hex: &str) -> (u8, u8, u8) {
     let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(255);
     let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(255);
     (r, g, b)
+}
+
+fn max_column_widths(display_lines: &Vec<(String, Vec<DisplayEntry>)>) -> (usize, usize) {
+    let mut max_line = 0usize;
+    let mut max_dir = 0usize;
+    for (_, entries) in display_lines {
+        for entry in entries {
+            max_line = max_line.max(UnicodeWidthStr::width(entry.line.as_str()));
+            max_dir = max_dir.max(UnicodeWidthStr::width(entry.dir.as_str()));
+        }
+    }
+    (max_line, max_dir)
 }

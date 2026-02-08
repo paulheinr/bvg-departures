@@ -35,6 +35,7 @@ fn u32_value_15() -> u32 {
 #[derive(Parser, Debug)]
 struct Cli {
     /// The path to the file to read
+    #[clap(default_value = "input/stops.yml")]
     path: std::path::PathBuf,
 
     /// Use a simple TUI for display
