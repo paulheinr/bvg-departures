@@ -52,6 +52,7 @@ async fn main() -> anyhow::Result<()> {
         let log_buffer = LogBuffer::new(8);
         let subscriber = tracing_subscriber::fmt()
             .with_writer(log_buffer.make_writer())
+            .with_ansi(false)
             .finish();
         tracing::subscriber::set_global_default(subscriber)?;
         Some(log_buffer)

@@ -21,7 +21,7 @@ use tui::style::{Color as TuiColor, Modifier, Style};
 use tui::text::{Span, Spans, Text};
 use tui::widgets::{Block, Borders, Paragraph};
 use tui::{backend::CrosstermBackend, Terminal};
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 #[derive(Clone)]
 pub struct LogBuffer {
@@ -129,7 +129,10 @@ impl<D: DeparturesApi + Sync> ResultDisplay for TuiDisplay<D> {
                 Event::Key(key) => match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => break,
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => break,
-                    KeyCode::Char('l') => info!("This is a sample log."),
+                    KeyCode::Char('l') => {
+                        info!("This is a sample log.");
+                        Self::render(&display_lines, &self.log_buffer, &mut terminal)?;
+                    }
                     KeyCode::Char('r') => {
                         // Refresh: re-fetch departures and re-render
                         let resp = self.api_client.get_departures(&self.stops).await?;
@@ -237,14 +240,29 @@ impl<D: DeparturesApi> TuiDisplay<D> {
                 .alignment(Alignment::Left);
 
             let log_lines = log_buffer.snapshot();
-            let log_spans: Vec<Spans> = if log_lines.is_empty() {
-                vec![Spans::from(Span::raw("No logs yet"))]
+            let log_inner_height = chunks[1].height.saturating_sub(2) as usize;
+            let log_inner_width = chunks[1].width.saturating_sub(2) as usize;
+            let mut visible_logs: Vec<String> = if log_lines.is_empty() {
+                vec!["No logs yet".to_string()]
+            } else if log_inner_height == 0 {
+                Vec::new()
             } else {
                 log_lines
                     .into_iter()
-                    .map(|line| Spans::from(Span::raw(line)))
+                    .rev()
+                    .take(log_inner_height)
+                    .collect::<Vec<String>>()
+                    .into_iter()
+                    .rev()
                     .collect()
             };
+            for line in &mut visible_logs {
+                *line = truncate_line(line, log_inner_width);
+            }
+            let log_spans: Vec<Spans> = visible_logs
+                .into_iter()
+                .map(|line| Spans::from(Span::raw(line)))
+                .collect();
             let log_paragraph = Paragraph::new(Text::from(log_spans))
                 .block(Block::default().borders(Borders::ALL).title("Logs"))
                 .alignment(Alignment::Left);
@@ -262,6 +280,26 @@ fn hex_to_rgb(hex: &str) -> (u8, u8, u8) {
     let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(255);
     let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(255);
     (r, g, b)
+}
+
+fn truncate_line(line: &str, max_width: usize) -> String {
+    if max_width == 0 {
+        return String::new();
+    }
+    if line.width() <= max_width {
+        return line.to_string();
+    }
+    let mut out = String::new();
+    let mut width = 0;
+    for ch in line.chars() {
+        let ch_width = ch.width().unwrap_or(0);
+        if width + ch_width > max_width {
+            break;
+        }
+        out.push(ch);
+        width += ch_width;
+    }
+    out
 }
 
 fn max_column_widths(display_lines: &Vec<(String, Vec<DisplayEntry>)>) -> (usize, usize) {
